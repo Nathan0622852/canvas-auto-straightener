@@ -1,0 +1,62 @@
+git clone https://github.com/nathan0622852/canvas-auto-straightener.git
+cd canvas-auto-straightener
+
+# Create the app file
+cat > streamlit_app.py <<EOF
+import streamlit as st
+import cv2
+import numpy as np
+
+st.title("🎨 Canvas Auto‑Straightener")
+st.write("Upload a photo of your canvas/painting and let me do the rest!")
+
+uploaded = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+if uploaded:
+    file_bytes = np.asarray(bytearray(uploaded.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    orig = img.copy()
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    edged = cv2.Canny(gray, 50, 200)
+    cnts, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    canvas, maxA = None, 0
+    for c in cnts:
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+        area = cv2.contourArea(approx)
+        if len(approx) == 4 and area > maxA:
+            canvas, maxA = approx, area
+
+    if canvas is None:
+        st.error("❌ No canvas-like rectangle found. Try another photo.")
+    else:
+        pts = canvas.reshape(4,2)
+        s = pts.sum(axis=1); diff = np.diff(pts, axis=1)
+        rect = np.array([
+            pts[np.argmin(s)],
+            pts[np.argmin(diff)],
+            pts[np.argmax(s)],
+            pts[np.argmax(diff)]
+        ], dtype="float32")
+
+        (tl, tr, br, bl) = rect
+        w = int(max(np.linalg.norm(br-bl), np.linalg.norm(tr-tl)))
+        h = int(max(np.linalg.norm(tr-br), np.linalg.norm(tl-bl)))
+        dst = np.array([[0,0],[w-1,0],[w-1,h-1],[0,h-1]], dtype="float32")
+        M = cv2.getPerspectiveTransform(rect, dst)
+        warp = cv2.warpPerspective(orig, M, (w, h))
+
+        bg = np.ones((max(w,h), max(w,h), 3), dtype=np.uint8) * 255
+        offset = ((max(w,h)-h)//2, (max(w,h)-w)//2)
+        bg[offset[0]:offset[0]+h, offset[1]:offset[1]+w] = warp
+        st.image(cv2.cvtColor(bg, cv2.COLOR_BGR2RGB), use_column_width=True)
+        st.success("✅ Here’s your corrected canvas!")
+EOF
+
+# Create requirements.txt
+echo -e "streamlit\nopencv-python-headless\nnumpy" > requirements.txt
+
+git add .
+git commit -m "Add canvas auto-straightener app"
+git push origin main
